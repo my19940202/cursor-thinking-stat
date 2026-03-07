@@ -1,88 +1,113 @@
-# Thinking Corpus — Cursor Plugin
+# thinking-get-hook
 
-A Cursor Plugin that automatically captures AI Agent "thinking" (reasoning) blocks and saves them as an English corpus in JSONL format.
+本项目是一个基于 Cursor Hooks 的数据采集与可视化工具，自动收集 AI Agent 的思考（推理）语料，并提供 Web 前端页面进行数据展示和分析。适合用于观察模型推理过程、统计分析，同时也可以用来提升英语阅读能力。
 
-## How It Works
+---
 
-This plugin registers an `afterAgentThought` hook. Every time the AI Agent completes a thinking block, the hook script extracts the full thinking text along with metadata and appends it as a single JSONL line to a corpus file.
+## Cursor Hooks 配置
 
-> **Requirement**: You must use a thinking-capable model (e.g., Claude Opus with thinking, o1, etc.) for the `afterAgentThought` hook to fire.
+采集依赖 Cursor 的 **用户级 Hooks**，配置在 `~/.cursor/` 下。
 
-## Installation
+### 1. 目录与脚本
 
-### From Git Repository
+在用户目录下建立脚本与配置（可从本仓库复制）：
 
-1. Clone this repository.
-2. In Cursor, install the plugin from the local directory.
-
-### From Cursor Marketplace
-
-Search for **thinking-corpus** in the Cursor Marketplace and click Install.
-
-## Corpus Output
-
-By default, the corpus is saved to:
-
-```
-~/thinking-corpus.jsonl
+```text
+~/.cursor/
+├── hooks.json                   # 见下方配置内容
+└── scripts/
+    ├── capture-event.mjs        # 统一事件写入 cursor-events.jsonl
+    ├── capture-thinking.mjs     # Thinking 写入 thinking-corpus.jsonl
+    ├── capture-response-to-txt.mjs
+    ├── capture-thinking.sh     # 可选，需 jq
+    └── test.sh
 ```
 
-Override the path by setting the environment variable:
+用户级 Hooks 的**工作目录**为 `~/.cursor/`，因此 `hooks.json` 中的命令使用 `./scripts/xxx.mjs` 即可。
 
-```bash
-export THINKING_CORPUS_PATH="/path/to/your/corpus.jsonl"
-```
-
-### JSONL Record Format
-
-Each line is a JSON object:
+### 2. hooks.json 配置示例
 
 ```json
 {
-  "text": "The agent's full thinking text...",
-  "timestamp": "2025-03-07T10:30:00.000Z",
-  "model": "claude-sonnet-4-20250514",
-  "conversation_id": "abc-123",
-  "generation_id": "gen-456",
-  "duration_ms": 5000
+  "version": 1,
+  "hooks": {
+    "beforeSubmitPrompt": [{ "command": "node ./scripts/capture-event.mjs" }],
+    "afterAgentResponse": [{ "command": "node ./scripts/capture-event.mjs" }],
+    "afterAgentThought": [
+      { "command": "node ./scripts/capture-thinking.mjs" },
+      { "command": "node ./scripts/capture-event.mjs" }
+    ],
+    "postToolUse": [{ "command": "node ./scripts/capture-event.mjs" }],
+    "postToolUseFailure": [{ "command": "node ./scripts/capture-event.mjs" }],
+    "sessionStart": [{ "command": "node ./scripts/capture-event.mjs" }],
+    "sessionEnd": [{ "command": "node ./scripts/capture-event.mjs" }],
+    "stop": [{ "command": "node ./scripts/capture-event.mjs" }],
+    "preCompact": [{ "command": "node ./scripts/capture-event.mjs" }],
+    "afterFileEdit": [{ "command": "node ./scripts/capture-event.mjs" }]
+  }
 }
 ```
 
-| Field             | Description                              |
-|-------------------|------------------------------------------|
-| `text`            | Full thinking block content              |
-| `timestamp`       | UTC timestamp when the record was saved  |
-| `model`           | Model that generated the thinking        |
-| `conversation_id` | Stable conversation identifier           |
-| `generation_id`   | Per-generation identifier                |
-| `duration_ms`     | How long the thinking block took (ms)    |
+### 3. 数据输出路径
 
-## Dependencies
+| 文件 | 来源 | 说明 |
+|------|------|------|
+| `~/thinking-corpus.jsonl` | `capture-thinking.mjs` | 每行一条 Thinking 记录（text、timestamp、model、duration_ms 等） |
+| `~/cursor-events.jsonl` | `capture-event.mjs` | 每行一条事件（event_type、timestamp、conversation_id 及事件字段） |
 
-- **Node.js** — used by the capture script (no npm install needed). Typically already installed for Cursor users. If not, install from [nodejs.org](https://nodejs.org).
+可通过环境变量覆盖路径：
 
-  If you have **jq** installed and prefer the shell script, you can use `./scripts/capture-thinking.sh` in `hooks.json` instead of the Node script.
+- `THINKING_CORPUS_PATH` → Thinking 语料文件
+- `CURSOR_EVENTS_PATH` → 事件文件
 
-## Debugging
+### 4. 依赖与运行
 
-1. Open **Cursor Settings** and navigate to the **Hooks** tab to verify the plugin hook is registered.
-2. Check the **Hooks output channel** in the Output panel for any script errors.
-3. Trigger a conversation with a thinking-capable model and check `~/thinking-corpus.jsonl` for new entries.
+- 脚本需 **Node.js**（无 npm 依赖）。
+- Web 端：在项目根目录执行 `npm install` 后 `npm run dev`，浏览器打开仪表盘；API 默认读取上述两个 JSONL 路径（可通过 `EVENTS_JSONL_PATH`、`CORPUS_JSONL_PATH` 覆盖）。
 
-## Project Structure
+更多事件字段说明见 [hooks.md](hooks.md)。
+
+
+
+---
+
+## 项目结构
 
 ```
 thinking-get-hook/
 ├── .cursor-plugin/
-│   └── plugin.json          # Plugin manifest
+│   └── plugin.json              # Cursor Plugin 清单（可选，用于插件形式分发）
+├── app/
+│   ├── layout.tsx
+│   ├── page.tsx                 # 仪表盘首页
+│   ├── globals.css
+│   ├── api/
+│   │   ├── events/route.ts      # GET 事件聚合（按日/类型）
+│   │   ├── stats/route.ts       # GET 汇总统计
+│   │   ├── thinking/route.ts    # GET Thinking 语料分页
+│   │   └── sessions/route.ts    # GET 会话列表
+│   ├── daily/page.tsx           # 每日统计页
+│   ├── thinking/page.tsx        # Thinking 语料页
+│   └── sessions/page.tsx       # 会话列表页
+├── components/
+│   ├── StatCards.tsx            # 统计卡片
+│   ├── DailyChart.tsx           # 按日趋势图（ECharts）
+│   ├── ThinkingList.tsx         # Thinking 列表（Markdown 渲染）
+│   └── SessionTable.tsx         # 会话表格
+├── lib/
+│   ├── events.ts                # 读 cursor-events.jsonl、按日聚合
+│   └── thinking.ts              # 读 thinking-corpus.jsonl、分页
 ├── hooks/
-│   └── hooks.json           # afterAgentThought hook config
+│   └── hooks.json               # 本仓库内 Hooks 配置（可复制到 ~/.cursor）
 ├── scripts/
-│   ├── capture-thinking.mjs # Capture script (Node, default)
-│   └── capture-thinking.sh  # Optional: shell version (requires jq)
+│   ├── capture-event.mjs        # 统一事件采集 → cursor-events.jsonl
+│   ├── capture-thinking.mjs     # Thinking 采集 → thinking-corpus.jsonl
+│   ├── capture-thinking.sh     # 可选：Shell 版（需 jq）
+│   ├── capture-response-to-txt.mjs
+│   └── test.sh
+├── hooks.md                     # Hooks 事件说明文档
+├── package.json
+├── next.config.ts
 └── README.md
 ```
 
-## License
-
-MIT
